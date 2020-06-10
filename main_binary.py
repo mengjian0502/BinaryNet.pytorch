@@ -37,6 +37,8 @@ parser.add_argument('--model', '-a', metavar='MODEL', default='alexnet',
                     ' (default: alexnet)')
 parser.add_argument('--input_size', type=int, default=None,
                     help='image input size')
+parser.add_argument('--depth', type=int, default=20,
+                    help='depth of the DNN')
 parser.add_argument('--model_config', default='',
                     help='additional architecture configuration')
 parser.add_argument('--type', default='torch.cuda.FloatTensor',
@@ -45,7 +47,7 @@ parser.add_argument('--gpus', default='0',
                     help='gpus used for training - e.g 0,1,3')
 parser.add_argument('-j', '--workers', default=8, type=int, metavar='N',
                     help='number of data loading workers (default: 8)')
-parser.add_argument('--epochs', default=2500, type=int, metavar='N',
+parser.add_argument('--epochs', default=250, type=int, metavar='N',
                     help='number of total epochs to run')
 parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
                     help='manual epoch number (useful on restarts)')
@@ -65,6 +67,14 @@ parser.add_argument('--resume', default='', type=str, metavar='PATH',
                     help='path to latest checkpoint (default: none)')
 parser.add_argument('-e', '--evaluate', type=str, metavar='FILE',
                     help='evaluate model FILE on validation set')
+
+# Activation quantization
+parser.add_argument('--clp', dest='clp',
+                    action='store_true', help='using clipped relu in each stage')
+parser.add_argument('--a_lambda', type=float,
+                    default=0.01, help='The parameter of alpha L2 regularization')
+parser.add_argument('--act_prec', type=int, default=4, help='precision of the activation')
+
 
 
 def main():
@@ -97,13 +107,14 @@ def main():
     # create model
     logging.info("creating model %s", args.model)
     model = models.__dict__[args.model]
-    model_config = {'input_size': args.input_size, 'dataset': args.dataset}
+    model_config = {'input_size': args.input_size, 'dataset': args.dataset, 'depth': args.depth, 'act_precision': args.act_prec}
 
     if args.model_config is not '':
         model_config = dict(model_config, **literal_eval(args.model_config))
 
     model = model(**model_config)
     logging.info("created model with configuration: %s", model_config)
+    logging.info(model)
 
     # optionally resume from a checkpoint
     if args.evaluate:
@@ -249,13 +260,17 @@ def forward(data_loader, model, criterion, epoch=0, training=True, optimizer=Non
         if type(output) is list:
             output = output[0]
 
-        # measure accuracy and record loss
-        prec1, prec5 = accuracy(output.data, target, topk=(1, 5))
-        losses.update(loss.item(), inputs.size(0))
-        top1.update(prec1.item(), inputs.size(0))
-        top5.update(prec5.item(), inputs.size(0))
-
         if training:
+            if args.clp:
+                reg_alpha = torch.tensor(0.).cuda()
+                a_lambda = torch.tensor(args.a_lambda).cuda()
+                alpha = []
+                for name, param in model.named_parameters():
+                    if 'alpha' in name:
+                        alpha.append(param.item())
+                        reg_alpha += param.item() ** 2
+                loss += a_lambda * (reg_alpha)
+    
             # compute gradient and do SGD step
             optimizer.zero_grad()
             loss.backward()
@@ -267,7 +282,12 @@ def forward(data_loader, model, criterion, epoch=0, training=True, optimizer=Non
                 if hasattr(p,'org'):
                     p.org.copy_(p.data.clamp_(-1,1))
 
-
+        # measure accuracy and record loss
+        prec1, prec5 = accuracy(output.data, target, topk=(1, 5))
+        losses.update(loss.item(), inputs.size(0))
+        top1.update(prec1.item(), inputs.size(0))
+        top5.update(prec5.item(), inputs.size(0))
+        
         # measure elapsed time
         batch_time.update(time.time() - end)
         end = time.time()
@@ -283,7 +303,8 @@ def forward(data_loader, model, criterion, epoch=0, training=True, optimizer=Non
                              phase='TRAINING' if training else 'EVALUATING',
                              batch_time=batch_time,
                              data_time=data_time, loss=losses, top1=top1, top5=top5))
-
+    if training and args.clp:    
+        logging.info('Activation clipping: {}'.format(alpha))
     return losses.avg, top1.avg, top5.avg
 
 

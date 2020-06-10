@@ -15,8 +15,6 @@ def Binarize(tensor,quant_mode='det'):
         return tensor.add_(1).div_(2).add_(torch.rand(tensor.size()).add(-0.5)).clamp_(0,1).round().mul_(2).add_(-1)
 
 
-
-
 class HingeLoss(nn.Module):
     def __init__(self):
         super(HingeLoss,self).__init__()
@@ -62,7 +60,7 @@ def Quantize(tensor,quant_mode='det',  params=None, numBits=8):
         quant_fixed(tensor, params)
     return tensor
 
-import torch.nn._functions as tnnf
+# import torch.nn._functions as tnnf
 
 
 class BinarizeLinear(nn.Linear):
