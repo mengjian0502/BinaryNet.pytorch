@@ -148,11 +148,11 @@ class ResNet(nn.Module):
 
         x = self.avgpool(x)
         x = x.view(x.size(0), -1)
-        # x = self.bn2(x)
-        # x = self.relu2(x)
+        x = self.bn2(x)
+        x = self.relu2(x)
         x = self.fc(x)
-        # x = self.bn3(x)
-        # x = self.logsoftmax(x)
+        x = self.bn3(x)
+        x = self.logsoftmax(x)
 
         return x
 
@@ -169,12 +169,17 @@ class ResNet_imagenet(ResNet):
         # self.relu1 = ClippedReLU(num_bits=act_precision, alpha=10.0, inplace=True)
         # self.relu2 = ClippedReLU(num_bits=act_precision, alpha=10.0, inplace=True)
         self.relu1 = nn.ReLU(inplace=True)
+        self.relu2 = nn.ReLU(inplace=True)
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
         self.layer1 = self._make_layer(block, 64, layers[0], stride=1, act_precision=act_precision)
         self.layer2 = self._make_layer(block, 128, layers[1], stride=2, act_precision=act_precision)
         self.layer3 = self._make_layer(block, 256, layers[2], stride=2, act_precision=act_precision)
         self.layer4 = self._make_layer(block, 512, layers[3], stride=2, act_precision=act_precision)
         self.avgpool = nn.AvgPool2d(4)
+        
+        self.bn2 = nn.BatchNorm1d(512)
+        self.bn3 = nn.BatchNorm1d(10)
+        self.logsoftmax = nn.LogSoftmax()
         self.fc = BinarizeLinear(512 * block.expansion, num_classes)
 
         init_model(self)
