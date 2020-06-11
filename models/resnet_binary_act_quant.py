@@ -35,10 +35,12 @@ class BasicBlock(nn.Module):
         self.conv1 = Binaryconv3x3(inplanes, planes, stride)
         self.bn1 = nn.BatchNorm2d(planes)
         # self.tanh1 = nn.Hardtanh(inplace=True)
-        self.tanh1 = ClippedHardTanh(num_bits=act_precision, alpha=1.0, inplace=True)
+        self.relu1 = nn.ReLU(inplace=True)
+        # self.tanh1 = ClippedHardTanh(num_bits=act_precision, alpha=1.0, inplace=True)
         self.conv2 = Binaryconv3x3(planes, planes)
         # self.tanh2 = nn.Hardtanh(inplace=True)
-        self.tanh2 = ClippedHardTanh(num_bits=act_precision, alpha=1.0, inplace=True)
+        self.relu2 = nn.ReLU(inplace=True)
+        # self.tanh2 = ClippedHardTanh(num_bits=act_precision, alpha=1.0, inplace=True)
         self.bn2 = nn.BatchNorm2d(planes)
 
         self.downsample = downsample
@@ -51,7 +53,7 @@ class BasicBlock(nn.Module):
 
         out = self.conv1(x)
         out = self.bn1(out)
-        out = self.tanh1(out)
+        out = self.relu1(out)
 
         out = self.conv2(out)
 
@@ -64,7 +66,7 @@ class BasicBlock(nn.Module):
         out += residual
         if self.do_bntan:
             out = self.bn2(out)
-            out = self.tanh2(out)
+            out = self.relu2(out)
 
         return out
 
@@ -136,7 +138,7 @@ class ResNet(nn.Module):
         x = self.conv1(x)
         x = self.maxpool(x)
         x = self.bn1(x)
-        x = self.tanh1(x)
+        x = self.relu1(x)
         x = self.layer1(x)
         x = self.layer2(x)
         x = self.layer3(x)
@@ -145,7 +147,7 @@ class ResNet(nn.Module):
         x = self.avgpool(x)
         x = x.view(x.size(0), -1)
         x = self.bn2(x)
-        x = self.tanh2(x)
+        x = self.relu2(x)
         x = self.fc(x)
         x = self.bn3(x)
         x = self.logsoftmax(x)
@@ -194,9 +196,12 @@ class ResNet_cifar10(ResNet):
         self.maxpool = lambda x: x
         self.bn1 = nn.BatchNorm2d(16*self.inflate)
         # self.tanh1 = nn.Hardtanh(inplace=True)
-        self.tanh1 = ClippedHardTanh(num_bits=act_precision, alpha=1.0, inplace=True)
+        self.relu1 = nn.ReLU(inplace=True)
+        # self.tanh1 = ClippedHardTanh(num_bits=act_precision, alpha=1.0, inplace=True)
+        
+        self.relu2 = nn.ReLU(inplace=True)
         # self.tanh2 = nn.Hardtanh(inplace=True)
-        self.tanh2 = ClippedHardTanh(num_bits=act_precision, alpha=1.0, inplace=True)
+        # self.tanh2 = ClippedHardTanh(num_bits=act_precision, alpha=1.0, inplace=True)
 
         self.layer1 = self._make_layer(block, 16*self.inflate, n, act_precision=act_precision)
         self.layer2 = self._make_layer(block, 32*self.inflate, n, stride=2, act_precision=act_precision)
