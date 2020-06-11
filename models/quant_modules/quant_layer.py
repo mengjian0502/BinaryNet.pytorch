@@ -164,6 +164,9 @@ class ClippedReLU(nn.Module):
         input = STEQuantizer.apply(input, scale, zero_point, self.dequantize, self.inplace)
         return input
 
+    def extra_repr(self):
+        return super(ClippedReLU, self).extra_repr() + 'nbit={}, alpha_init={}'.format(self.num_bits, self.alpha.detach().item())
+
 class ClippedHardTanh(nn.Module):
     def __init__(self, num_bits, alpha=8.0, inplace=False, dequantize=True):
         super(ClippedHardTanh, self).__init__()

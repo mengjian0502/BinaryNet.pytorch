@@ -70,9 +70,8 @@ class BinarizeLinear(nn.Linear):
 
     def forward(self, input):
 
-        if input.size(1) != 784:
-            # input.data=Binarize(input.data)
-            input.data = Quantize(input.data, numBits=4)
+        # if input.size(1) != 784:
+        #     input.data=Binarize(input.data)
         if not hasattr(self.weight,'org'):
             self.weight.org=self.weight.data.clone()
         self.weight.data=Binarize(self.weight.org)
@@ -90,9 +89,8 @@ class BinarizeConv2d(nn.Conv2d):
 
 
     def forward(self, input):
-        if input.size(1) != 3:
-            # input.data = Binarize(input.data)
-            input.data = Quantize(input.data, numBits=4)
+        # if input.size(1) != 3:
+        #     input.data = Binarize(input.data)
         if not hasattr(self.weight,'org'):
             self.weight.org=self.weight.data.clone()
         self.weight.data=Binarize(self.weight.org)

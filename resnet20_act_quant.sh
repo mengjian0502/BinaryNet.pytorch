@@ -1,10 +1,13 @@
 PYTHON="/home/mengjian/anaconda3/bin/python3"
-save_path="resnet20_binary_inflation5_basline"
+depth=18
 model=resnet_binary_act_quant
-act_precision=2
+act_precision=4
+save_path="resnet${depth}_binary_inflation1_baseline"
 
 $PYTHON main_binary.py --model ${model} \
     --save ${save_path} \
     --dataset cifar10 \
-    --depth 20 \
-    --act_prec ${act_precision}
+    --depth ${depth} \
+    # --clp \
+    # --a_lambda 0.001 \
+    # --act_prec ${act_precision}

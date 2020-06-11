@@ -1,7 +1,7 @@
 import torch.nn as nn
 import torchvision.transforms as transforms
 import math
-from .quant_modules import ClippedHardTanh
+from .quant_modules import ClippedHardTanh, ClippedReLU
 from .binarized_modules import  BinarizeLinear,BinarizeConv2d
 
 __all__ = ['resnet_binary_act_quant']
@@ -36,11 +36,11 @@ class BasicBlock(nn.Module):
         self.bn1 = nn.BatchNorm2d(planes)
         # self.tanh1 = nn.Hardtanh(inplace=True)
         self.relu1 = nn.ReLU(inplace=True)
-        # self.tanh1 = ClippedHardTanh(num_bits=act_precision, alpha=1.0, inplace=True)
+        # self.relu1 = ClippedReLU(num_bits=act_precision, alpha=10.0, inplace=True)
         self.conv2 = Binaryconv3x3(planes, planes)
         # self.tanh2 = nn.Hardtanh(inplace=True)
         self.relu2 = nn.ReLU(inplace=True)
-        # self.tanh2 = ClippedHardTanh(num_bits=act_precision, alpha=1.0, inplace=True)
+        # self.relu2 = ClippedReLU(num_bits=act_precision, alpha=10.0, inplace=True)
         self.bn2 = nn.BatchNorm2d(planes)
 
         self.downsample = downsample
@@ -83,7 +83,8 @@ class Bottleneck(nn.Module):
         self.bn2 = nn.BatchNorm2d(planes)
         self.conv3 = BinarizeConv2d(planes, planes * 4, kernel_size=1, bias=False)
         self.bn3 = nn.BatchNorm2d(planes * 4)
-        self.tanh = nn.Hardtanh(inplace=True)
+        # self.tanh = nn.Hardtanh(inplace=True)
+        self.relu = nn.ReLU(inplace=True)
         self.downsample = downsample
         self.stride = stride
 
@@ -92,11 +93,13 @@ class Bottleneck(nn.Module):
         import pdb; pdb.set_trace()
         out = self.conv1(x)
         out = self.bn1(out)
-        out = self.tanh(out)
+        # out = self.tanh(out)
+        out = self.relu(out)
 
         out = self.conv2(out)
         out = self.bn2(out)
-        out = self.tanh(out)
+        # out = self.tanh(out)
+        out = self.relu(out)
 
         out = self.conv3(out)
         out = self.bn3(out)
@@ -125,7 +128,6 @@ class ResNet(nn.Module):
                           kernel_size=1, stride=stride, bias=False),
                 nn.BatchNorm2d(planes * block.expansion),
             )
-
         layers = []
         layers.append(block(self.inplanes, planes, stride, downsample, act_precision=act_precision))
         self.inplanes = planes * block.expansion
@@ -136,7 +138,7 @@ class ResNet(nn.Module):
 
     def forward(self, x):
         x = self.conv1(x)
-        x = self.maxpool(x)
+        # x = self.maxpool(x)
         x = self.bn1(x)
         x = self.relu1(x)
         x = self.layer1(x)
@@ -146,11 +148,11 @@ class ResNet(nn.Module):
 
         x = self.avgpool(x)
         x = x.view(x.size(0), -1)
-        x = self.bn2(x)
-        x = self.relu2(x)
+        # x = self.bn2(x)
+        # x = self.relu2(x)
         x = self.fc(x)
-        x = self.bn3(x)
-        x = self.logsoftmax(x)
+        # x = self.bn3(x)
+        # x = self.logsoftmax(x)
 
         return x
 
@@ -158,19 +160,21 @@ class ResNet(nn.Module):
 class ResNet_imagenet(ResNet):
 
     def __init__(self, num_classes=1000,
-                 block=Bottleneck, layers=[3, 4, 23, 3]):
+                 block=Bottleneck, layers=[3, 4, 23, 3], act_precision=4):
         super(ResNet_imagenet, self).__init__()
         self.inplanes = 64
-        self.conv1 = BinarizeConv2d(3, 64, kernel_size=7, stride=2, padding=3,
-                               bias=False)
+        self.conv1 = BinarizeConv2d(3, 64, kernel_size=3, stride=1, padding=1,bias=False)
         self.bn1 = nn.BatchNorm2d(64)
-        self.tanh = nn.Hardtanh(inplace=True)
+        # self.tanh = nn.Hardtanh(inplace=True)
+        # self.relu1 = ClippedReLU(num_bits=act_precision, alpha=10.0, inplace=True)
+        # self.relu2 = ClippedReLU(num_bits=act_precision, alpha=10.0, inplace=True)
+        self.relu1 = nn.ReLU(inplace=True)
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
-        self.layer1 = self._make_layer(block, 64, layers[0])
-        self.layer2 = self._make_layer(block, 128, layers[1], stride=2)
-        self.layer3 = self._make_layer(block, 256, layers[2], stride=2)
-        self.layer4 = self._make_layer(block, 512, layers[3], stride=2)
-        self.avgpool = nn.AvgPool2d(7)
+        self.layer1 = self._make_layer(block, 64, layers[0], stride=1, act_precision=act_precision)
+        self.layer2 = self._make_layer(block, 128, layers[1], stride=2, act_precision=act_precision)
+        self.layer3 = self._make_layer(block, 256, layers[2], stride=2, act_precision=act_precision)
+        self.layer4 = self._make_layer(block, 512, layers[3], stride=2, act_precision=act_precision)
+        self.avgpool = nn.AvgPool2d(4)
         self.fc = BinarizeLinear(512 * block.expansion, num_classes)
 
         init_model(self)
@@ -196,12 +200,12 @@ class ResNet_cifar10(ResNet):
         self.maxpool = lambda x: x
         self.bn1 = nn.BatchNorm2d(16*self.inflate)
         # self.tanh1 = nn.Hardtanh(inplace=True)
-        self.relu1 = nn.ReLU(inplace=True)
-        # self.tanh1 = ClippedHardTanh(num_bits=act_precision, alpha=1.0, inplace=True)
+        # self.relu1 = nn.ReLU(inplace=True)
+        self.relu1 = ClippedReLU(num_bits=act_precision, alpha=10.0, inplace=True)
         
-        self.relu2 = nn.ReLU(inplace=True)
+        # self.relu2 = nn.ReLU(inplace=True)
         # self.tanh2 = nn.Hardtanh(inplace=True)
-        # self.tanh2 = ClippedHardTanh(num_bits=act_precision, alpha=1.0, inplace=True)
+        self.relu2 = ClippedReLU(num_bits=act_precision, alpha=10.0, inplace=True)
 
         self.layer1 = self._make_layer(block, 16*self.inflate, n, act_precision=act_precision)
         self.layer2 = self._make_layer(block, 32*self.inflate, n, stride=2, act_precision=act_precision)
@@ -254,6 +258,9 @@ def resnet_binary_act_quant(**kwargs):
 
     elif dataset == 'cifar10':
         num_classes = num_classes or 10
-        depth = depth or 18
-        return ResNet_cifar10(num_classes=num_classes,
-                              block=BasicBlock, depth=depth, act_precision=act_precision)
+        depth = depth
+        if depth == 18:
+            return ResNet_imagenet(num_classes=num_classes,block=BasicBlock, layers=[2, 2, 2, 2], act_precision=act_precision)
+        else:                      
+            return ResNet_cifar10(num_classes=num_classes,
+                                block=BasicBlock, depth=depth, act_precision=act_precision)
