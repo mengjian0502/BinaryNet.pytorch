@@ -35,12 +35,12 @@ class BasicBlock(nn.Module):
         self.conv1 = Binaryconv3x3(inplanes, planes, stride)
         self.bn1 = nn.BatchNorm2d(planes)
         # self.tanh1 = nn.Hardtanh(inplace=True)
-        # self.relu1 = nn.ReLU(inplace=True)
-        self.relu1 = ClippedReLU(num_bits=act_precision, alpha=10.0, inplace=True)
+        self.relu1 = nn.ReLU(inplace=True)
+        # self.relu1 = ClippedReLU(num_bits=act_precision, alpha=10.0, inplace=True)
         self.conv2 = Binaryconv3x3(planes, planes)
         # self.tanh2 = nn.Hardtanh(inplace=True)
-        # self.relu2 = nn.ReLU(inplace=True)
-        self.relu2 = ClippedReLU(num_bits=act_precision, alpha=10.0, inplace=True)
+        self.relu2 = nn.ReLU(inplace=True)
+        # self.relu2 = ClippedReLU(num_bits=act_precision, alpha=10.0, inplace=True)
         self.bn2 = nn.BatchNorm2d(planes)
 
         self.downsample = downsample
@@ -138,7 +138,7 @@ class ResNet(nn.Module):
 
     def forward(self, x):
         x = self.conv1(x)
-        # x = self.maxpool(x)
+        x = self.maxpool(x)
         x = self.bn1(x)
         x = self.relu1(x)
         x = self.layer1(x)
@@ -160,17 +160,18 @@ class ResNet(nn.Module):
 class ResNet_imagenet(ResNet):
 
     def __init__(self, num_classes=1000,
-                 block=Bottleneck, layers=[3, 4, 23, 3], act_precision=4):
+                 block=Bottleneck, layers=[3, 4, 23, 3], act_precision=4, dataset='cifar10'):
         super(ResNet_imagenet, self).__init__()
         self.inplanes = 64
         self.conv1 = BinarizeConv2d(3, 64, kernel_size=3, stride=1, padding=1,bias=False)
         self.bn1 = nn.BatchNorm2d(64)
         # self.tanh = nn.Hardtanh(inplace=True)
-        self.relu1 = ClippedReLU(num_bits=act_precision, alpha=10.0, inplace=True)
-        self.relu2 = ClippedReLU(num_bits=act_precision, alpha=10.0, inplace=True)
-        # self.relu1 = nn.ReLU(inplace=True)
-        # self.relu2 = nn.ReLU(inplace=True)
-        self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
+        # self.relu1 = ClippedReLU(num_bits=act_precision, alpha=10.0, inplace=True)
+        # self.relu2 = ClippedReLU(num_bits=act_precision, alpha=10.0, inplace=True)
+        self.relu1 = nn.ReLU(inplace=True)
+        self.relu2 = nn.ReLU(inplace=True)
+        # self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
+        self.maxpool = lambda x: x
         self.layer1 = self._make_layer(block, 64, layers[0], stride=1, act_precision=act_precision)
         self.layer2 = self._make_layer(block, 128, layers[1], stride=2, act_precision=act_precision)
         self.layer3 = self._make_layer(block, 256, layers[2], stride=2, act_precision=act_precision)
@@ -183,13 +184,22 @@ class ResNet_imagenet(ResNet):
         self.fc = BinarizeLinear(512 * block.expansion, num_classes)
 
         init_model(self)
-        self.regime = {
-            0: {'optimizer': 'SGD', 'lr': 1e-1,
-                'weight_decay': 1e-4, 'momentum': 0.9},
-            30: {'lr': 1e-2},
-            60: {'lr': 1e-3, 'weight_decay': 0},
-            90: {'lr': 1e-4}
-        }
+        if dataset == 'cifar10':
+            self.regime = {
+                0: {'optimizer': 'Adam', 'lr': 5e-3},
+                101: {'lr': 1e-3},
+                142: {'lr': 5e-4},
+                184: {'lr': 1e-4},
+                220: {'lr': 1e-5}
+            } 
+        else:   
+            self.regime = {
+                0: {'optimizer': 'SGD', 'lr': 1e-1,
+                    'weight_decay': 1e-4, 'momentum': 0.9},
+                30: {'lr': 1e-2},
+                60: {'lr': 1e-3, 'weight_decay': 0},
+                90: {'lr': 1e-4}
+            }
 
 
 class ResNet_cifar10(ResNet):
@@ -265,7 +275,6 @@ def resnet_binary_act_quant(**kwargs):
         num_classes = num_classes or 10
         depth = depth
         if depth == 18:
-            return ResNet_imagenet(num_classes=num_classes,block=BasicBlock, layers=[2, 2, 2, 2], act_precision=act_precision)
+            return ResNet_imagenet(num_classes=num_classes, block=BasicBlock, layers=[2, 2, 2, 2], act_precision=act_precision, dataset='cifar10')
         else:                      
-            return ResNet_cifar10(num_classes=num_classes,
-                                block=BasicBlock, depth=depth, act_precision=act_precision)
+            return ResNet_cifar10(num_classes=num_classes, block=BasicBlock, depth=depth, act_precision=act_precision)

@@ -86,8 +86,7 @@ class BinarizeConv2d(nn.Conv2d):
 
     def __init__(self, *kargs, **kwargs):
         super(BinarizeConv2d, self).__init__(*kargs, **kwargs)
-
-
+        
     def forward(self, input):
         # if input.size(1) != 3:
         #     input.data = Binarize(input.data)
