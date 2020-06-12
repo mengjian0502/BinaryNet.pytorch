@@ -153,29 +153,45 @@ class ResNet(nn.Module):
 class ResNet_imagenet(ResNet):
 
     def __init__(self, num_classes=1000,
-                 block=Bottleneck, layers=[3, 4, 23, 3]):
+                 block=Bottleneck, layers=[3, 4, 23, 3], dataset='cifar10'):
         super(ResNet_imagenet, self).__init__()
         self.inplanes = 64
-        self.conv1 = BinarizeConv2d(3, 64, kernel_size=7, stride=2, padding=3,
-                               bias=False)
+        self.conv1 = BinarizeConv2d(3, 64, kernel_size=3, stride=1, padding=1,bias=False)
         self.bn1 = nn.BatchNorm2d(64)
-        self.tanh = nn.Hardtanh(inplace=True)
-        self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
-        self.layer1 = self._make_layer(block, 64, layers[0])
-        self.layer2 = self._make_layer(block, 128, layers[1], stride=2)
-        self.layer3 = self._make_layer(block, 256, layers[2], stride=2)
-        self.layer4 = self._make_layer(block, 512, layers[3], stride=2)
-        self.avgpool = nn.AvgPool2d(7)
+        
+        self.tanh1 = nn.Hardtanh(inplace=True)
+        self.tanh2 = nn.Hardtanh(inplace=True)
+
+        self.maxpool = lambda x: x
+        self.layer1 = self._make_layer(block, 64, layers[0], stride=1, act_precision=act_precision)
+        self.layer2 = self._make_layer(block, 128, layers[1], stride=2, act_precision=act_precision)
+        self.layer3 = self._make_layer(block, 256, layers[2], stride=2, act_precision=act_precision)
+        self.layer4 = self._make_layer(block, 512, layers[3], stride=2, act_precision=act_precision)
+        self.avgpool = nn.AvgPool2d(4)
+        
+        self.bn2 = nn.BatchNorm1d(512)
+        self.bn3 = nn.BatchNorm1d(10)
+        self.logsoftmax = nn.LogSoftmax()
         self.fc = BinarizeLinear(512 * block.expansion, num_classes)
 
         init_model(self)
-        self.regime = {
-            0: {'optimizer': 'SGD', 'lr': 1e-1,
-                'weight_decay': 1e-4, 'momentum': 0.9},
-            30: {'lr': 1e-2},
-            60: {'lr': 1e-3, 'weight_decay': 0},
-            90: {'lr': 1e-4}
-        }
+        if dataset == 'cifar10':
+            self.regime = {
+                0: {'optimizer': 'Adam', 'lr': 5e-3},
+                101: {'lr': 1e-3},
+                142: {'lr': 5e-4},
+                184: {'lr': 1e-4},
+                220: {'lr': 1e-5}
+            } 
+        else:   
+            self.regime = {
+                0: {'optimizer': 'SGD', 'lr': 1e-1,
+                    'weight_decay': 1e-4, 'momentum': 0.9},
+                30: {'lr': 1e-2},
+                60: {'lr': 1e-3, 'weight_decay': 0},
+                90: {'lr': 1e-4}
+            }
+
 
 
 class ResNet_cifar10(ResNet):
@@ -219,9 +235,9 @@ class ResNet_cifar10(ResNet):
         }
 
 
-def resnet_binary(**kwargs):
-    num_classes, depth, dataset = map(
-        kwargs.get, ['num_classes', 'depth', 'dataset'])
+def resnet_binary_act_quant(**kwargs):
+    num_classes, depth, dataset, act_precision = map(
+        kwargs.get, ['num_classes', 'depth', 'dataset','act_precision'])
     if dataset == 'imagenet':
         num_classes = num_classes or 1000
         depth = depth or 50
@@ -243,6 +259,9 @@ def resnet_binary(**kwargs):
 
     elif dataset == 'cifar10':
         num_classes = num_classes or 10
-        depth = depth or 18
-        return ResNet_cifar10(num_classes=num_classes,
-                              block=BasicBlock, depth=depth)
+        depth = depth
+        if depth == 18:
+            return ResNet_imagenet(num_classes=num_classes, block=BasicBlock, layers=[2, 2, 2, 2], dataset='cifar10')
+        else:                      
+            return ResNet_cifar10(num_classes=num_classes, block=BasicBlock, depth=depth)
+
