@@ -89,8 +89,6 @@ def symmetric_linear_quantization_params(num_bits, saturation_val, restrict_qran
         return scale.item(), zero_point.item()
     return scale, zero_point
 
-
-
 def get_scale(input, z):
     # c1, c2 = 3.212, 2.178         # 2bit from typical distribution regression
     c1, c2 = 1/z[0], z[1]/z[0]

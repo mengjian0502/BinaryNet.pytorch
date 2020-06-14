@@ -5,6 +5,8 @@ import math
 from torch.autograd import Variable
 from torch.autograd import Function
 
+
+
 import numpy as np
 
 
@@ -51,15 +53,20 @@ class SqrtHingeLossFunction(Function):
        grad_output.div_(input.numel())
        return grad_output,grad_output
 
+def non_zeroQ(input, numBits=4):
+    output = input / 2 / torch.max(torch.abs(input)) + 1 / 2
+    output=output.mul(2**numBits-1).round().div(2**numBits-1)
+    output = 2 * output - 1
+    return output
+
 def Quantize(tensor,quant_mode='det',  params=None, numBits=8):
-    tensor.clamp_(-2**(numBits-1),2**(numBits-1))
     if quant_mode=='det':
-        tensor=tensor.mul(2**(numBits-1)).round().div(2**(numBits-1))
+        tensor.clamp_(-2**(numBits-1),2**(numBits-1))
+        tensor = non_zeroQ(tensor, numBits=numBits)
     else:
         tensor=tensor.mul(2**(numBits-1)).round().add(torch.rand(tensor.size()).add(-0.5)).div(2**(numBits-1))
         quant_fixed(tensor, params)
     return tensor
-
 # import torch.nn._functions as tnnf
 
 
@@ -69,9 +76,9 @@ class BinarizeLinear(nn.Linear):
         super(BinarizeLinear, self).__init__(*kargs, **kwargs)
 
     def forward(self, input):
-
-        # if input.size(1) != 784:
-        #     input.data=Binarize(input.data)
+        if input.size(1) != 784:
+            input.data=Quantize(input.data, numBits=2)
+            # input.data=Binarize(input.data)
         if not hasattr(self.weight,'org'):
             self.weight.org=self.weight.data.clone()
         self.weight.data=Binarize(self.weight.org)
@@ -88,7 +95,8 @@ class BinarizeConv2d(nn.Conv2d):
         super(BinarizeConv2d, self).__init__(*kargs, **kwargs)
         
     def forward(self, input):
-        # if input.size(1) != 3:
+        if input.size(1) != 3:
+            input.data=Quantize(input.data, numBits=2)
         #     input.data = Binarize(input.data)
         if not hasattr(self.weight,'org'):
             self.weight.org=self.weight.data.clone()

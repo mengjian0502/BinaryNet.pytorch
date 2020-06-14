@@ -163,10 +163,10 @@ class ResNet_imagenet(ResNet):
         self.tanh2 = nn.Hardtanh(inplace=True)
 
         self.maxpool = lambda x: x
-        self.layer1 = self._make_layer(block, 64, layers[0], stride=1, act_precision=act_precision)
-        self.layer2 = self._make_layer(block, 128, layers[1], stride=2, act_precision=act_precision)
-        self.layer3 = self._make_layer(block, 256, layers[2], stride=2, act_precision=act_precision)
-        self.layer4 = self._make_layer(block, 512, layers[3], stride=2, act_precision=act_precision)
+        self.layer1 = self._make_layer(block, 64, layers[0], stride=1)
+        self.layer2 = self._make_layer(block, 128, layers[1], stride=2)
+        self.layer3 = self._make_layer(block, 256, layers[2], stride=2)
+        self.layer4 = self._make_layer(block, 512, layers[3], stride=2)
         self.avgpool = nn.AvgPool2d(4)
         
         self.bn2 = nn.BatchNorm1d(512)
@@ -235,7 +235,7 @@ class ResNet_cifar10(ResNet):
         }
 
 
-def resnet_binary_act_quant(**kwargs):
+def resnet_binary(**kwargs):
     num_classes, depth, dataset, act_precision = map(
         kwargs.get, ['num_classes', 'depth', 'dataset','act_precision'])
     if dataset == 'imagenet':
