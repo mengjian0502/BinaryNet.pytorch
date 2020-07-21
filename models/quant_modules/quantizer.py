@@ -152,7 +152,7 @@ class STEQuantizer_weight(torch.autograd.Function):
             if len(torch.unique(output)) == 2**nbit + 1:
                 n = (2 ** nbit) / 2
                 output = output.clamp(-n, n-1)
-        print(f'quantized INT = {torch.unique(output)}')
+        # print(f'quantized INT = {torch.unique(output)}')
         if dequantize:
             output = linear_dequantize(output, scale, zero_point)  
         return output

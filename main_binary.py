@@ -75,6 +75,11 @@ parser.add_argument('--a_lambda', type=float,
                     default=0.01, help='The parameter of alpha L2 regularization')
 parser.add_argument('--act_prec', type=int, default=4, help='precision of the activation')
 
+# weight quantization
+parser.add_argument('--w_prec', type=int, default=4, help='precision of the weight')
+parser.add_argument('--q_mode', type=str, default="mean", help='weight quantization mode')
+parser.add_argument('--k', type=int, default=2, help='coefficient of quantization boundary')
+
 
 
 def main():
@@ -107,7 +112,7 @@ def main():
     # create model
     logging.info("creating model %s", args.model)
     model = models.__dict__[args.model]
-    model_config = {'input_size': args.input_size, 'dataset': args.dataset, 'depth': args.depth, 'act_precision': args.act_prec}
+    model_config = {'input_size': args.input_size, 'dataset': args.dataset, 'depth': args.depth, 'act_precision': args.act_prec, 'wbit':args.w_prec, 'mode':args.q_mode, 'k':args.k}
 
     if args.model_config is not '':
         model_config = dict(model_config, **literal_eval(args.model_config))

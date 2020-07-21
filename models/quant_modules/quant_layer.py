@@ -177,13 +177,11 @@ class ClippedHardTanh(nn.Module):
         
     def forward(self, input):
         input = F.hardtanh(input)
-        # print(f'after tanh maximum: {input.max()} | minimum: {input.min()}')
-        input = torch.where(input < self.alpha, input, self.alpha)
         
         with torch.no_grad():
-            # scale, zero_point = quantizer(self.num_bits, 0, self.alpha)
-            scale, zero_point = symmetric_linear_quantization_params(self.num_bits, self.alpha)
+            scale, zero_point = symmetric_linear_quantization_params(self.num_bits, 1.0)
         input = STEQuantizer_weight.apply(input, scale, zero_point, self.dequantize, self.inplace, self.num_bits, False)
+        # print(len(torch.unique(input)))
         return input
 
     # def extra_repr(self):
@@ -243,22 +241,19 @@ class sawb_w2_Func(torch.autograd.Function):
         return grad_input
 
 class int_quant_func(torch.autograd.Function):
-    def __init__(self, nbit, restrictRange=True):
+    def __init__(self, nbit, alpha_w, restrictRange=True, ch_group=16, push=False):
         super(int_quant_func, self).__init__()
         self.nbit = nbit
         self.restrictRange = restrictRange
-    
+        self.alpha_w = alpha_w
+        self.ch_group = ch_group
+        self.push = push
+
     def forward(self, input):
         self.save_for_backward(input)
-
-        z_typical = {'4bit': [0.077, 1.013], '8bit':[0.027, 1.114]}                 # c1, c2 from the typical distribution (4bit)
-        z_net_4bit = {'resnet20': [0.107, 0.881]}                                   # c1, c2 from the specifical models
-
-        alpha_w = get_scale(input, z_typical['4bit']).item()
-        output = input.clamp(-alpha_w, alpha_w)
-
-        scale, zero_point = symmetric_linear_quantization_params(self.nbit, abs(alpha_w), restrict_qrange=self.restrictRange)
-        output = STEQuantizer_weight.apply(output, scale, zero_point, True, False, self.nbit, self.restrictRange)
+        output = input.clamp(-self.alpha_w.item(), self.alpha_w.item())
+        scale, zero_point = symmetric_linear_quantization_params(self.nbit, self.alpha_w, restrict_qrange=self.restrictRange)
+        output = STEQuantizer_weight.apply(output, scale, zero_point, True, False, self.nbit, self.restrictRange)   
 
         return output
 
@@ -271,97 +266,230 @@ class int_quant_func(torch.autograd.Function):
 
 class int_conv2d(nn.Conv2d):
     def __init__(self, in_channels, out_channels, kernel_size, stride=1, 
-                 padding=0, dilation=1, groups=1, bias=False, nbit=4):
+                 padding=0, dilation=1, groups=1, bias=False, nbit=4, mode='mean', k=2, ch_group=16, push=False):
         super(int_conv2d, self).__init__(in_channels, out_channels, kernel_size,
                 stride=stride, padding=padding, dilation=dilation, groups=groups,
                 bias=bias)
         self.nbit = nbit
-        self.mask_original = torch.ones_like(self.weight).cuda()
+        self.mode = mode
+        self.k = k
+        self.ch_group = ch_group
+        self.push = push
+        self.iter = 0
+        self.mask = torch.ones_like(self.weight).cuda()
 
     def forward(self, input):
-        w_mean = self.weight.mean()
-        weight_c = self.weight - w_mean
+        w_l = self.weight.clone()
+
+        if self.mode == 'mean':
+            self.alpha_w = self.k * w_l.abs().mean()
+        elif self.mode == 'sawb':
+            z_typical = {'4bit': [0.077, 1.013], '8bit':[0.027, 1.114]}               
+            self.alpha_w = get_scale(w_l, z_typical[f'{int(self.nbit)}bit'])
+        else:
+            raise ValueError("Quantization mode must be either 'mean' or 'sawb'! ")                         
+            
+        weight_q = int_quant_func(nbit=self.nbit, alpha_w=self.alpha_w, restrictRange=True, ch_group=self.ch_group, push=self.push)(w_l)
+        w_p = weight_q.clone()
+        num_group = w_p.size(0) * w_p.size(1) // self.ch_group
+        # if self.push and self.iter is 0:
+        if self.push and (self.iter+1) % 4000 == 0:
+            print("Inference Prune!")
+            kw = weight_q.size(2)
+            num_group = w_p.size(0) * w_p.size(1) // self.ch_group
+            w_p = w_p.contiguous().view((num_group, self.ch_group, kw, kw))
+            
+            self.mask = torch.ones_like(w_p)
+
+            for j in range(num_group):
+                idx = torch.nonzero(w_p[j, :, :, :])
+                r = len(idx) / (self.ch_group * kw * kw)
+                internal_sparse = 1 - r
+
+                if internal_sparse >= 0.85 and internal_sparse != 1.0:
+                    # print(internal_sparse)
+                    self.mask[j, :, :, :] = 0.0
+
+            w_p = w_p * self.mask
+            w_p = w_p.contiguous().view((num_group, self.ch_group * kw * kw))
+            grp_values = w_p.norm(p=2, dim=1)
+            non_zero_idx = torch.nonzero(grp_values) 
+            num_nonzeros = len(non_zero_idx)
+            zero_groups = num_group - num_nonzeros 
+            # print(f'zero groups = {zero_groups}')
+
+            self.mask = self.mask.clone().resize_as_(weight_q)
         
-        z_typical = {'4bit': [0.077, 1.013], '8bit':[0.027, 1.114]}                 # c1, c2 from the typical distribution (4bit)
-        alpha_w = get_scale(weight_c, z_typical['4bit']).item()
-        self.alpha_w = alpha_w
-
-        weight_q = int_quant_func(nbit=self.nbit, restrictRange=True)(weight_c)
-
-        output = F.conv2d(input, weight_q*self.mask_original, self.bias, self.stride, self.padding, self.dilation, self.groups)
-        return output
-    
-    def extra_repr(self):
-        return super(int_conv2d, self).extra_repr() + ', nbit={}'.format(self.nbit)
-
-class int_linear(nn.Linear):
-    def __init__(self, in_channels, out_channels, bias=True, nbit=8):
-        super(int_linear, self).__init__(in_features=in_channels, out_features=out_channels, bias=bias)
-        self.nbit=nbit
-    
-    def forward(self, input):
-        w_mean = self.weight.mean()
-        weight_c = self.weight
-
-        # print(f'Linear layer | Input shape: {list(input.size())} | Weight shape: {list(weight_c.size())}')
-        weight_q = int_quant_func(nbit=self.nbit)(weight_c)
-
-        output = F.linear(input, weight_q, self.bias)
-
-        # print(f'Weight size: {list(weight_q.size())}')
-        # print(f'input size:: {list(input.size())}')
-        # print(f'output fm size:{list(output.size())}')
-        # print("========================")
-        return output
-
-    def extra_repr(self):
-        return super(int_linear, self).extra_repr() + ', nbit={}'.format(self.nbit)
-
-class sawb_tern_Conv2d(nn.Conv2d):
-
-    def forward(self, input):
-        z_typical_tern = [2.587, 1.693]                 # c1, c2 from the typical distribution (tern)
-        quan_th = get_scale(self.weight, z_typical_tern)
-
-        weight = sawb_ternFunc(th=quan_th)(self.weight)
-        output = F.conv2d(input, weight, self.bias, self.stride, self.padding, self.dilation, self.groups)
+        if not self.push:
+            self.mask = torch.ones_like(self.weight)
         
-        return output
+        weight_q = self.mask * weight_q
 
-class sawb_w2_Conv2d(nn.Conv2d):
-
-    def forward(self, input):
-        z_typical = {'4bit': [0.077, 1.013], '8bit':[0.027, 1.114]}
-
-        # alpha_w = get_scale_2bit(self.weight)
-        # alpha_w = get_scale_reg2(self.weight)
-        alpha_w = get_scale(input, z_typical['4bit']).item()
-
-        weight = sawb_w2_Func(alpha=alpha_w)(self.weight)
-        output = F.conv2d(input, weight, self.bias, self.stride, self.padding, self.dilation, self.groups)
-        
-        return output
-
-
-class zero_grp_skp_quant(nn.Conv2d):
-    def __init__(self, in_channels, out_channels, kernel_size, stride=1, 
-                 padding=0, dilation=1, groups=1, bias=False, nbit=2, coef=0.05, skp_group=8):
-        super(zero_grp_skp_quant, self).__init__(in_channels, out_channels, kernel_size,
-                stride=stride, padding=padding, dilation=dilation, groups=groups,
-                bias=bias)
-        self.nbit = nbit
-        self.coef = coef
-        self.skp_group = skp_group
-
-    def forward(self, input):
-        weight = self.weight
-
-        weight_q = zero_skp_quant(nbit=self.nbit, coef=self.coef, group_ch=self.skp_group)(weight)
         output = F.conv2d(input, weight_q, self.bias, self.stride, self.padding, self.dilation, self.groups)
         
+        # if weight_q.size(2) != 1:
+        #     batch = output.size(0)
+        #     d = output.size(1)
+        #     h = output.size(2)
+        #     w = output.size(3)
+
+        #     out_tmp = output.view(batch, d, h*w)
+        #     out_tmp = out_tmp.squeeze(0)
+
+        #     out_tmp = out_tmp.norm(p=2, dim=1)
+        #     non_zero_output = len(torch.nonzero(out_tmp.contiguous().view(-1)))
+
+        #     print('=========================================')
+        #     print(f'size of the input feature map: {list(input.size())}')
+        #     print(f'size of the weight: {list(weight_q.size())}, number of groups/col:{num_group}| stride={self.stride} | padding={self.padding}')
+        #     print(f'number of nonzero output channel: {non_zero_output}')
+        #     print(f'size of the output feature map: {list(output.size())}')
+        #     print('=========================================\n')
+        self.iter += 1
         return output
     
     def extra_repr(self):
-        return super(zero_grp_skp_quant, self).extra_repr() + ', nbit={}, coef={}, skp_group={}'.format(
-                self.nbit, self.coef, self.skp_group)
+        return super(int_conv2d, self).extra_repr() + ', nbit={}, mode={}, k={}, ch_group={}, push={}'.format(self.nbit, self.mode, self.k, self.ch_group, self.push)
 
+
+class int_linear(nn.Linear):
+    def __init__(self, in_channels, out_channels, bias=True, nbit=8, mode='mean', k=2, ch_group=16, push=False):
+        super(int_linear, self).__init__(in_features=in_channels, out_features=out_channels, bias=bias)
+        self.nbit=nbit
+        self.mode = mode
+        self.k = k
+        self.ch_group = ch_group
+        self.push = push
+
+    def forward(self, input):
+        w_l = self.weight.clone()
+
+        if self.mode == 'mean':
+            self.alpha_w = self.k * w_l.abs().mean()
+        elif self.mode == 'sawb':
+            z_typical = {'4bit': [0.077, 1.013], '8bit':[0.027, 1.114]}               
+            self.alpha_w = get_scale(w_l, z_typical[f'{int(self.nbit)}bit'])
+        else:
+            raise ValueError("Quantization mode must be either 'mean' or 'sawb'! ")                         
+            
+        weight_q = int_quant_func(nbit=self.nbit, alpha_w=self.alpha_w, restrictRange=True, ch_group=self.ch_group, push=self.push)(w_l)
+        output = F.linear(input, weight_q, self.bias)
+
+        w_tmp = weight_q.clone()
+        grp_val = w_tmp.norm(p=2, dim=1)
+        num_non_zero = len(torch.nonzero(grp_val.contiguous().view(-1)))
+        num_zero_grp = w_tmp.size(0) - num_non_zero
+
+        # output vector
+        out_tmp = F.linear(input, weight_q, bias=torch.Tensor([0]).cuda())
+        non_zero_output = len(torch.nonzero(out_tmp.contiguous().view(-1)))
+
+        # print('=========================================')
+        # print(f'size of the input feature map: {list(input.size())}')
+        # print(f'size of the group val:{grp_val.size()}')
+        # print(f'size of the weight: {list(weight_q.size())} ')
+        # print(f'number of zero groups: {num_zero_grp}')
+        # print(f'number of nonzero output channel: {non_zero_output}')
+        # print(f'size of the output feature map: {list(output.size())}')
+        # print('=========================================\n')
+
+        return output
+
+    def extra_repr(self):
+        return super(int_linear, self).extra_repr() + ', nbit={}, mode={}, k={}, ch_group={}, push={}'.format(self.nbit, self.mode, self.k, self.ch_group, self.push)
+
+"""
+2-bit quantization
+"""
+
+def w2_quant(input, mode='mean', k=2):
+    if mode == 'mean':
+            alpha_w = k * input.abs().mean()
+    elif mode == 'sawb':
+        alpha_w = get_scale_2bit(w_l)
+    else:
+        raise ValueError("Quantization mode must be either 'mean' or 'sawb'! ")
+    
+    output = input.clone()
+    output[input.ge(alpha_w - alpha_w/3)] = alpha_w
+    output[input.lt(-alpha_w + alpha_w/3)] = -alpha_w
+
+    output[input.lt(alpha_w - alpha_w/3)*input.ge(0)] = alpha_w/3
+    output[input.ge(-alpha_w + alpha_w/3)*input.lt(0)] = -alpha_w/3
+
+    return output
+
+class sawb_w2_Func(torch.autograd.Function):
+    def __init__(self, alpha_w):
+        super(sawb_w2_Func, self).__init__()
+        self.alpha_w = alpha_w 
+
+    def forward(self, input):
+        self.save_for_backward(input)
+        
+        output = input.clone()
+        output[input.ge(self.alpha_w - self.alpha_w/3)] = self.alpha_w
+        output[input.lt(-self.alpha_w + self.alpha_w/3)] = -self.alpha_w
+
+        output[input.lt(self.alpha_w - self.alpha_w/3)*input.ge(0)] = self.alpha_w/3
+        output[input.ge(-self.alpha_w + self.alpha_w/3)*input.lt(0)] = -self.alpha_w/3
+
+        return output
+    
+    def backward(self, grad_output):
+    
+        grad_input = grad_output.clone()
+        input, = self.saved_tensors
+        grad_input[input.ge(1)] = 0
+        grad_input[input.le(-1)] = 0
+
+        return grad_input
+
+class Conv2d_2bit(nn.Conv2d):
+    def __init__(self, in_channels, out_channels, kernel_size, stride=1, 
+                 padding=0, dilation=1, groups=1, bias=False, mode='sawb', k=2):
+        super(Conv2d_2bit, self).__init__(in_channels, out_channels, kernel_size,
+                stride=stride, padding=padding, dilation=dilation, groups=groups, bias=bias)
+        self.mode = mode
+        self.k = k
+        self.alpha_w = 1.
+
+    def forward(self, input):
+        w_l = self.weight.clone()
+
+        if self.mode == 'mean':
+            self.alpha_w = self.k * w_l.abs().mean()
+        elif self.mode == 'sawb':
+            self.alpha_w = get_scale_2bit(w_l)
+        else:
+            raise ValueError("Quantization mode must be either 'mean' or 'sawb'! ") 
+
+        
+        weight = sawb_w2_Func(alpha_w=self.alpha_w)(w_l)
+        output = F.conv2d(input, weight, self.bias, self.stride, self.padding, self.dilation, self.groups)
+        
+        return output
+
+class Linear2bit(nn.Linear):
+    def __init__(self, in_channels, out_channels, bias=True, mode='mean', k=2):
+        super(Linear2bit, self).__init__(in_features=in_channels, out_features=out_channels, bias=bias)
+        self.mode = mode
+        self.k = k
+
+    def forward(self, input):
+        w_l = self.weight.clone()
+
+        if self.mode == 'mean':
+            self.alpha_w = self.k * w_l.abs().mean()
+        elif self.mode == 'sawb':
+            self.alpha_w = get_scale_2bit(w_l)
+        else:
+            raise ValueError("Quantization mode must be either 'mean' or 'sawb'! ") 
+        
+        weight_q = sawb_w2_Func(alpha_w=self.alpha_w)(w_l)
+
+        output = F.linear(input, weight_q, self.bias)
+        return output
+
+    def extra_repr(self):
+        return super(Linear2bit, self).extra_repr() + ', mode={}, k={}'.format(self.mode, self.k)
