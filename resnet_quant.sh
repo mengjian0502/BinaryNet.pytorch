@@ -1,8 +1,8 @@
-PYTHON="/home/mengjian/anaconda3/bin/python3"
+PYTHON="/home/jmeng15/anaconda3/bin/python3"
 depth=18
-model=resnet_binary_act_quant
-act_precision=4
-w_prec=4
+model=resnet_2bit
+act_precision=2
+w_prec=2
 optimizer=SGD
 mode=mean
 k=2
@@ -18,4 +18,4 @@ $PYTHON -W ignore main_binary.py \
     --q_mode ${mode} \
     --k ${k} \
     --optimizer ${optimizer} \
-
+    --b 128 \

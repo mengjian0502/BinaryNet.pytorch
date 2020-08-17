@@ -1,15 +1,9 @@
 import torch.nn as nn
 import torchvision.transforms as transforms
 import math
-from .quant_modules import ClippedHardTanh, ClippedReLU, int_conv2d, int_linear
-from .binarized_modules import  BinarizeLinear,BinarizeConv2d
+from .quant_modules import HardTanh2bit, Conv2d_2bit, Linear2bit
 
-__all__ = ['resnet_binary_act_quant']
-
-def Binaryconv3x3(in_planes, out_planes, stride=1):
-    "3x3 convolution with padding"
-    return BinarizeConv2d(in_planes, out_planes, kernel_size=3, stride=stride,
-                     padding=1, bias=False)
+__all__ = ['resnet_2bit']
 
 def conv3x3(in_planes, out_planes, stride=1):
     "3x3 convolution with padding"
@@ -29,21 +23,16 @@ def init_model(model):
 class BasicBlock(nn.Module):
     expansion = 1
 
-    def __init__(self, inplanes, planes, stride=1, downsample=None,do_bntan=True, act_precision=4, wbit=4, mode='mean', k=2):
+    def __init__(self, inplanes, planes, stride=1, downsample=None,do_bntan=True, act_precision=2, wbit=2, mode='sawb', k=2):
         super(BasicBlock, self).__init__()
-
-        # self.conv1 = int_conv2d(inplanes, planes, kernel_size=3, stride=stride, padding=1, bias=False, nbit=wbit, mode=mode, k=k)
+        self.conv1 = Conv2d_2bit(inplanes, planes, kernel_size=3, stride=stride, padding=1, bias=False, mode=mode, k=k)
         self.conv1 = conv3x3(inplanes, planes, stride)
         self.bn1 = nn.BatchNorm2d(planes)
-        # self.tanh1 = nn.Hardtanh(inplace=True)
-        # self.tanh1 = nn.ReLU(inplace=True)
-        self.tanh1 = ClippedHardTanh(num_bits=act_precision, alpha=1.0, inplace=True)
-        # self.conv2 = int_conv2d(planes, planes, kernel_size=3, stride=1, padding=1, bias=False, nbit=wbit, mode=mode, k=k)
-        self.conv2 = conv3x3(planes, planes)
+        self.tanh1 = HardTanh2bit(num_bits=act_precision, inplace=True)
+
+        self.conv2 = Conv2d_2bit(planes, planes, kernel_size=3, stride=1, padding=1, bias=False, mode=mode, k=k)
         self.bn2 = nn.BatchNorm2d(planes)
-        # self.tanh2 = nn.Hardtanh(inplace=True)
-        # self.tanh2 = nn.ReLU(inplace=True)
-        self.tanh2 = ClippedHardTanh(num_bits=act_precision, alpha=1.0, inplace=True)
+        self.tanh2 = HardTanh2bit(num_bits=act_precision, inplace=True)
 
         self.downsample = downsample
         self.do_bntan=do_bntan
@@ -71,8 +60,7 @@ class BasicBlock(nn.Module):
 
 
 class Bottleneck(nn.Module):
-    expansion = 4
-
+    expansion = 1
     def __init__(self, inplanes, planes, stride=1, downsample=None):
         super(Bottleneck, self).__init__()
         self.conv1 = BinarizeConv2d(inplanes, planes, kernel_size=1, bias=False)
@@ -82,7 +70,6 @@ class Bottleneck(nn.Module):
         self.bn2 = nn.BatchNorm2d(planes)
         self.conv3 = BinarizeConv2d(planes, planes * 4, kernel_size=1, bias=False)
         self.bn3 = nn.BatchNorm2d(planes * 4)
-        # self.tanh = nn.Hardtanh(inplace=True)
         self.relu = nn.ReLU(inplace=True)
         self.downsample = downsample
         self.stride = stride
@@ -123,10 +110,8 @@ class ResNet(nn.Module):
         downsample = None
         if stride != 1 or self.inplanes != planes * block.expansion:
             downsample = nn.Sequential(
-                # int_conv2d(self.inplanes, planes * block.expansion,
-                #           kernel_size=1, stride=stride, bias=False, nbit=wbit, mode=mode, k=k),
-                nn.Conv2d(self.inplanes, planes * block.expansion,
-                          kernel_size=1, stride=stride, bias=False),
+                Conv2d_2bit(self.inplanes, planes * block.expansion,
+                          kernel_size=1, stride=stride, bias=False, mode=mode, k=k),
                 nn.BatchNorm2d(planes * block.expansion),
             )
         layers = []
@@ -141,7 +126,7 @@ class ResNet(nn.Module):
         x = self.conv1(x)
         x = self.maxpool(x)
         x = self.bn1(x)
-        x = self.relu1(x)
+        x = self.tanh1(x)
         x = self.layer1(x)
         x = self.layer2(x)
         x = self.layer3(x)
@@ -161,14 +146,12 @@ class ResNet(nn.Module):
 class ResNet_imagenet(ResNet):
 
     def __init__(self, num_classes=1000,
-                 block=Bottleneck, layers=[3, 4, 23, 3], act_precision=4, wbit=4, mode='mean', k=2, dataset='cifar10'):
+                 block=Bottleneck, layers=[3, 4, 23, 3], act_precision=2, wbit=2, mode='sawb', k=2, dataset='cifar10'):
         super(ResNet_imagenet, self).__init__()
         self.inplanes = 64
-
-        self.conv1 = nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=1, bias=False)
+        self.conv1 = Conv2d_2bit(3, 64, kernel_size=3, stride=1, padding=1, bias=False, mode=mode, k=k)
         self.bn1 = nn.BatchNorm2d(64)
-        self.relu1 = nn.Hardtanh(inplace=True)
-        # self.relu1 = nn.ReLU(inplace=True)
+        self.tanh1 = HardTanh2bit(num_bits=act_precision, inplace=True)
 
         self.maxpool = lambda x: x
         self.layer1 = self._make_layer(block, 64, layers[0], stride=1, act_precision=act_precision, wbit=wbit, mode=mode, k=k)
@@ -180,7 +163,6 @@ class ResNet_imagenet(ResNet):
         # self.bn2 = nn.BatchNorm1d(512)
         # self.bn3 = nn.BatchNorm1d(10)
         # self.logsoftmax = nn.LogSoftmax()
-        # self.fc = int_linear(512 * block.expansion, num_classes, nbit=wbit, mode=mode, k=k)
         self.fc = nn.Linear(512 * block.expansion, num_classes)
 
         init_model(self)
@@ -247,7 +229,7 @@ class ResNet_cifar10(ResNet):
         }
 
 
-def resnet_binary_act_quant(**kwargs):
+def resnet_2bit(**kwargs):
     num_classes, depth, dataset, act_precision, wbit, mode, k = map(
         kwargs.get, ['num_classes', 'depth', 'dataset','act_precision', 'wbit', 'mode', 'k'])
     if dataset == 'imagenet':

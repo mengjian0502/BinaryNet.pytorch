@@ -177,11 +177,10 @@ class ClippedHardTanh(nn.Module):
         
     def forward(self, input):
         input = F.hardtanh(input)
-        
         with torch.no_grad():
-            scale, zero_point = symmetric_linear_quantization_params(self.num_bits, 1.0)
+            scale, zero_point = symmetric_linear_quantization_params(self.num_bits, 1.0, False)
         input = STEQuantizer_weight.apply(input, scale, zero_point, self.dequantize, self.inplace, self.num_bits, False)
-        # print(len(torch.unique(input)))
+        print(torch.unique(input))
         return input
 
     # def extra_repr(self):
@@ -326,25 +325,6 @@ class int_conv2d(nn.Conv2d):
         weight_q = self.mask * weight_q
 
         output = F.conv2d(input, weight_q, self.bias, self.stride, self.padding, self.dilation, self.groups)
-        
-        # if weight_q.size(2) != 1:
-        #     batch = output.size(0)
-        #     d = output.size(1)
-        #     h = output.size(2)
-        #     w = output.size(3)
-
-        #     out_tmp = output.view(batch, d, h*w)
-        #     out_tmp = out_tmp.squeeze(0)
-
-        #     out_tmp = out_tmp.norm(p=2, dim=1)
-        #     non_zero_output = len(torch.nonzero(out_tmp.contiguous().view(-1)))
-
-        #     print('=========================================')
-        #     print(f'size of the input feature map: {list(input.size())}')
-        #     print(f'size of the weight: {list(weight_q.size())}, number of groups/col:{num_group}| stride={self.stride} | padding={self.padding}')
-        #     print(f'number of nonzero output channel: {non_zero_output}')
-        #     print(f'size of the output feature map: {list(output.size())}')
-        #     print('=========================================\n')
         self.iter += 1
         return output
     
@@ -383,16 +363,6 @@ class int_linear(nn.Linear):
         # output vector
         out_tmp = F.linear(input, weight_q, bias=torch.Tensor([0]).cuda())
         non_zero_output = len(torch.nonzero(out_tmp.contiguous().view(-1)))
-
-        # print('=========================================')
-        # print(f'size of the input feature map: {list(input.size())}')
-        # print(f'size of the group val:{grp_val.size()}')
-        # print(f'size of the weight: {list(weight_q.size())} ')
-        # print(f'number of zero groups: {num_zero_grp}')
-        # print(f'number of nonzero output channel: {non_zero_output}')
-        # print(f'size of the output feature map: {list(output.size())}')
-        # print('=========================================\n')
-
         return output
 
     def extra_repr(self):
@@ -464,7 +434,6 @@ class Conv2d_2bit(nn.Conv2d):
         else:
             raise ValueError("Quantization mode must be either 'mean' or 'sawb'! ") 
 
-        
         weight = sawb_w2_Func(alpha_w=self.alpha_w)(w_l)
         output = F.conv2d(input, weight, self.bias, self.stride, self.padding, self.dilation, self.groups)
         
@@ -487,9 +456,21 @@ class Linear2bit(nn.Linear):
             raise ValueError("Quantization mode must be either 'mean' or 'sawb'! ") 
         
         weight_q = sawb_w2_Func(alpha_w=self.alpha_w)(w_l)
-
         output = F.linear(input, weight_q, self.bias)
         return output
 
     def extra_repr(self):
         return super(Linear2bit, self).extra_repr() + ', mode={}, k={}'.format(self.mode, self.k)
+
+class HardTanh2bit(nn.Module):
+    def __init__(self, num_bits, inplace=False, dequantize=True):
+        super(HardTanh2bit, self).__init__()
+        self.num_bits = num_bits
+        self.inplace = inplace
+        self.dequantize = dequantize
+    def forward(self, input):
+        input = F.hardtanh(input)
+        input_q = sawb_w2_Func(alpha_w=1.0)(input)
+        return input_q
+    def extra_repr(self):
+        return super(HardTanh2bit, self).extra_repr() + 'nbit={}, inplace={}'.format(self.num_bits, self.inplace)
