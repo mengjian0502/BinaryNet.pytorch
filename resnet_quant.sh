@@ -4,7 +4,7 @@ model=resnet_2bit
 act_precision=2
 w_prec=2
 optimizer=SGD
-mode=mean
+mode=sawb
 k=2
 save_path="resnet${depth}_binary_inflation1_pactquant_A${act_precision}bit_W${w_prec}_mode${q_mode}_k${k}_${optimizer}"
 

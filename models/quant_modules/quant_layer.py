@@ -89,63 +89,6 @@ class sawb_ternFunc(torch.autograd.Function):
         grad_input[input.le(-1)] = 0
         return grad_input
 
-class zero_skp_quant(torch.autograd.Function):
-    def __init__(self, nbit, coef, group_ch):
-        super(zero_skp_quant, self).__init__()
-        self.nbit = nbit
-        self.coef = coef
-        self.group_ch = group_ch
-    
-    def forward(self, input):
-        self.save_for_backward(input)
-
-        # alpha_w_original = get_scale(input, z_typical[f'{int(self.nbit)}bit'])
-        alpha_w_original = get_scale_2bit(input)
-        interval = 2*alpha_w_original / (2**self.nbit - 1) / 2
-        self.th = self.coef * interval
-
-        cout = input.size(0)
-        cin = input.size(1)
-        kh = input.size(2)
-        kw = input.size(3)
-        num_group = (cout * cin) // self.group_ch
-
-        w_t = input.view(num_group, self.group_ch*kh*kw)
-
-        grp_values = w_t.norm(p=2, dim=1)                                               # L2 norm
-        mask_1d = grp_values.gt(self.th*self.group_ch*kh*kw).float()
-        # mask_dropout = torch.rand_like(mask_1d_small).lt(self.prob).float()
-
-        # apply the probablistic sampling:
-        # mask_1d = 1 - mask_1d_small * mask_dropout
-        mask_2d = mask_1d.view(w_t.size(0),1).expand(w_t.size()) 
-
-        w_t = w_t * mask_2d
-
-        non_zero_idx = torch.nonzero(mask_1d).squeeze(1)                             # get the indexes of the nonzero groups
-        non_zero_grp = w_t[non_zero_idx]                                             # what about the distribution of non_zero_group?
-        
-        weight_q = non_zero_grp.clone()
-        alpha_w = get_scale_2bit(weight_q)
-
-        weight_q[non_zero_grp.ge(alpha_w - alpha_w/3)] = alpha_w
-        weight_q[non_zero_grp.lt(-alpha_w + alpha_w/3)] = -alpha_w
-        
-        weight_q[non_zero_grp.lt(alpha_w - alpha_w/3)*non_zero_grp.ge(0)] = alpha_w/3
-        weight_q[non_zero_grp.ge(-alpha_w + alpha_w/3)*non_zero_grp.lt(0)] = -alpha_w/3
-
-        w_t[non_zero_idx] = weight_q
-        
-        output = w_t.clone().resize_as_(input)
-        return output
-
-    def backward(self, grad_output):
-        grad_input = grad_output.clone()
-        input, = self.saved_tensors
-        grad_input[input.ge(1)] = 0
-        grad_input[input.le(-1)] = 0
-        return grad_input
-
 class ClippedReLU(nn.Module):
     def __init__(self, num_bits, alpha=8.0, inplace=False, dequantize=True):
         super(ClippedReLU, self).__init__()
@@ -185,32 +128,6 @@ class ClippedHardTanh(nn.Module):
 
     # def extra_repr(self):
     #     return super(ClippedHardTanh, self).extra_repr() + 'nbit={}, alpha_init={}'.format(self.num_bits, self.alpha.detach().item())
-    
-class clamp_conv2d(nn.Conv2d):
-
-    def forward(self, input):
-        
-        num_bits = [2]
-        z_typical = {'2bit': [0.311, 0.678], '4bit': [0.077, 1.013], '8bit':[0.027, 1.114]}
-
-        # w_mean = self.weight.mean()
-
-        weight_c = self.weight
-
-        q_scale = get_scale(self.weight, z_typical[f'{num_bits[0]}bit']).item()
-
-        weight_th = weight_c.clamp(-q_scale, q_scale)
-
-        weight_th = q_scale * weight_th / 2 / torch.max(torch.abs(weight_th)) + q_scale / 2
-
-        scale, zero_point = quantizer(num_bits[0], 0, abs(q_scale))
-        weight_th = STEQuantizer.apply(weight_th, scale, zero_point, True, False)
-
-        weight_q = 2 * weight_th - q_scale
-
-        output = F.conv2d(input, weight_q, self.bias, self.stride, self.padding, self.dilation, self.groups)
-        
-        return output
 
 class sawb_w2_Func(torch.autograd.Function):
 

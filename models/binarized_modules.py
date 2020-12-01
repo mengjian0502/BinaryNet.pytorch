@@ -5,8 +5,6 @@ import math
 from torch.autograd import Variable
 from torch.autograd import Function
 
-
-
 import numpy as np
 
 
@@ -16,6 +14,28 @@ def Binarize(tensor,quant_mode='det'):
     else:
         return tensor.add_(1).div_(2).add_(torch.rand(tensor.size()).add(-0.5)).clamp_(0,1).round().mul_(2).add_(-1)
 
+def Ternarize(tensor):
+    th = 0.5
+    t = tensor.clone().zero_()
+    t[tensor.ge(th)] = 1.
+    t[tensor.le(-th)] = -1.
+    return t
+
+class STETernary(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, input, inplace):
+        if inplace:
+            ctx.mark_dirty(input)
+
+        output = Ternarize(input)
+        return output
+    
+    @staticmethod
+    def backward(ctx, grad_output):
+        """
+        Straight Through Estimator
+        """
+        return grad_output, None, None, None, None
 
 class HingeLoss(nn.Module):
     def __init__(self):
@@ -77,8 +97,9 @@ class BinarizeLinear(nn.Linear):
 
     def forward(self, input):
         if input.size(1) != 784:
-            input.data=Quantize(input.data, numBits=2)
+            # input.data=Quantize(input.data, numBits=2)
             # input.data=Binarize(input.data)
+            input = Ternarize(input)
         if not hasattr(self.weight,'org'):
             self.weight.org=self.weight.data.clone()
         self.weight.data=Binarize(self.weight.org)
@@ -96,8 +117,9 @@ class BinarizeConv2d(nn.Conv2d):
         
     def forward(self, input):
         if input.size(1) != 3:
-            input.data=Quantize(input.data, numBits=2)
-        #     input.data = Binarize(input.data)
+            # input.data=Quantize(input.data, numBits=2)
+            # input.data = Binarize(input.data)
+            input = Ternarize(input)
         if not hasattr(self.weight,'org'):
             self.weight.org=self.weight.data.clone()
         self.weight.data=Binarize(self.weight.org)

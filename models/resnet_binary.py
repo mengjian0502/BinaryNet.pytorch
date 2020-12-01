@@ -27,7 +27,6 @@ def init_model(model):
 
 class BasicBlock(nn.Module):
     expansion = 1
-
     def __init__(self, inplanes, planes, stride=1, downsample=None,do_bntan=True):
         super(BasicBlock, self).__init__()
 
@@ -192,10 +191,7 @@ class ResNet_imagenet(ResNet):
                 90: {'lr': 1e-4}
             }
 
-
-
 class ResNet_cifar10(ResNet):
-
     def __init__(self, num_classes=10,
                  block=BasicBlock, depth=18):
         super(ResNet_cifar10, self).__init__()

@@ -160,10 +160,11 @@ class ResNet_imagenet(ResNet):
         self.layer4 = self._make_layer(block, 512, layers[3], stride=2, act_precision=act_precision, wbit=wbit, mode=mode, k=k)
         self.avgpool = nn.AvgPool2d(4)
         
-        # self.bn2 = nn.BatchNorm1d(512)
-        # self.bn3 = nn.BatchNorm1d(10)
-        # self.logsoftmax = nn.LogSoftmax()
-        self.fc = nn.Linear(512 * block.expansion, num_classes)
+        self.bn2 = nn.BatchNorm1d(512)
+        self.bn3 = nn.BatchNorm1d(10)
+        self.logsoftmax = nn.LogSoftmax()
+        # self.fc = nn.Linear(512 * block.expansion, num_classes)
+        self.fc = Linear2bit(512 * block.expansion, num_classes, mode=mode, k=k)
 
         init_model(self)
         if dataset == 'cifar10':
@@ -194,12 +195,7 @@ class ResNet_cifar10(ResNet):
                                bias=False)
         self.maxpool = lambda x: x
         self.bn1 = nn.BatchNorm2d(16*self.inflate)
-        # self.tanh1 = nn.Hardtanh(inplace=True)
-        # self.relu1 = nn.ReLU(inplace=True)
         self.relu1 = ClippedReLU(num_bits=act_precision, alpha=10.0, inplace=True)
-        
-        # self.relu2 = nn.ReLU(inplace=True)
-        # self.tanh2 = nn.Hardtanh(inplace=True)
         self.relu2 = ClippedReLU(num_bits=act_precision, alpha=10.0, inplace=True)
 
         self.layer1 = self._make_layer(block, 16*self.inflate, n, act_precision=act_precision)
