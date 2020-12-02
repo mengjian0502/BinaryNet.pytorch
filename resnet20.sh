@@ -1,5 +1,5 @@
 PYTHON="/home/jmeng15/anaconda3/bin/python3"
-save_path="resnet18_binary"
+save_path="resnet18_ternery"
 model=resnet_binary
 
 $PYTHON main_binary.py --model ${model} \

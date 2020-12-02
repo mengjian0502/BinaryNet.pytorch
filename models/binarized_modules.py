@@ -21,7 +21,7 @@ def Ternarize(tensor):
     t[tensor.le(-th)] = -1.
     return t
 
-class STETernary(torch.autograd.Function):
+class STETernery(torch.autograd.Function):
     @staticmethod
     def forward(ctx, input, inplace):
         if inplace:
@@ -36,6 +36,15 @@ class STETernary(torch.autograd.Function):
         Straight Through Estimator
         """
         return grad_output, None, None, None, None
+
+class TerneryHardTanh(nn.Module):
+    def __init__(self, inplace=True):
+        super(TerneryHardTanh, self).__init__()
+        self.inplace = inplace
+    def forward(self, input):
+        input = torch.nn.functional.hardtanh(input)
+        input = STETernery.apply(input, self.inplace)
+        return input
 
 class HingeLoss(nn.Module):
     def __init__(self):
@@ -96,10 +105,10 @@ class BinarizeLinear(nn.Linear):
         super(BinarizeLinear, self).__init__(*kargs, **kwargs)
 
     def forward(self, input):
-        if input.size(1) != 784:
-            # input.data=Quantize(input.data, numBits=2)
-            # input.data=Binarize(input.data)
-            input = Ternarize(input)
+        # if input.size(1) != 784:
+        #     # input.data=Quantize(input.data, numBits=2)
+        #     # input.data=Binarize(input.data)
+        #     input = STETernery.apply(input, True)
         if not hasattr(self.weight,'org'):
             self.weight.org=self.weight.data.clone()
         self.weight.data=Binarize(self.weight.org)
@@ -116,10 +125,10 @@ class BinarizeConv2d(nn.Conv2d):
         super(BinarizeConv2d, self).__init__(*kargs, **kwargs)
         
     def forward(self, input):
-        if input.size(1) != 3:
-            # input.data=Quantize(input.data, numBits=2)
-            # input.data = Binarize(input.data)
-            input = Ternarize(input)
+        # if input.size(1) != 3:
+        #     # input.data=Quantize(input.data, numBits=2)
+        #     # input.data = Binarize(input.data)
+        #     input = STETernery.apply(input, True)
         if not hasattr(self.weight,'org'):
             self.weight.org=self.weight.data.clone()
         self.weight.data=Binarize(self.weight.org)
@@ -132,3 +141,4 @@ class BinarizeConv2d(nn.Conv2d):
             out += self.bias.view(1, -1, 1, 1).expand_as(out)
 
         return out
+

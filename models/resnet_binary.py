@@ -1,7 +1,7 @@
 import torch.nn as nn
 import torchvision.transforms as transforms
 import math
-from .binarized_modules import  BinarizeLinear,BinarizeConv2d
+from .binarized_modules import  BinarizeLinear,BinarizeConv2d, TerneryHardTanh
 
 __all__ = ['resnet_binary']
 
@@ -32,9 +32,10 @@ class BasicBlock(nn.Module):
 
         self.conv1 = Binaryconv3x3(inplanes, planes, stride)
         self.bn1 = nn.BatchNorm2d(planes)
-        self.tanh1 = nn.Hardtanh(inplace=True)
+        # self.tanh1 = nn.Hardtanh(inplace=True)
+        self.tanh1 = TerneryHardTanh(inplace=True)
         self.conv2 = Binaryconv3x3(planes, planes)
-        self.tanh2 = nn.Hardtanh(inplace=True)
+        self.tanh2 = TerneryHardTanh(inplace=True)
         self.bn2 = nn.BatchNorm2d(planes)
 
         self.downsample = downsample
@@ -202,8 +203,8 @@ class ResNet_cifar10(ResNet):
                                bias=False)
         self.maxpool = lambda x: x
         self.bn1 = nn.BatchNorm2d(16*self.inflate)
-        self.tanh1 = nn.Hardtanh(inplace=True)
-        self.tanh2 = nn.Hardtanh(inplace=True)
+        self.tanh1 = TerneryHardTanh(inplace=True)
+        self.tanh2 = TerneryHardTanh(inplace=True)
         self.layer1 = self._make_layer(block, 16*self.inflate, n)
         self.layer2 = self._make_layer(block, 32*self.inflate, n, stride=2)
         self.layer3 = self._make_layer(block, 64*self.inflate, n, stride=2,do_bntan=False)
